@@ -1,1 +1,2 @@
-console.log('Happy developing ✨')
+import './styles/styles.css'
+import './js/app.js'

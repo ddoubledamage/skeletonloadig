@@ -1,61 +1,92 @@
-// service-worker.js
-
-const CACHE_NAME = 'my-cache-v1'; // Уникальное имя кеша
+const CACHE_NAME = 'my-cache-v1';
 const urlsToCache = [
-    '/', // Главная страница
-    '/index.html', // HTML файл
-    '/style.css', // CSS файл
-    '/app.js', // Ваш JS файл
-    '/assets/boo.png', // Картинка (если она у вас)
-    // Добавьте другие статические файлы, которые хотите кешировать
+    '/',
+    '/index.html',
+    '/main.css',
+    '/main.js',
+    '29b97a89167d3bb20e1b.png',
 ];
 
-// Устанавливаем кеш при установке service worker
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            console.log('Service Worker: Caching files');
-            return cache.addAll(urlsToCache); // Кешируем все указанные файлы
-        })
+        caches.open(CACHE_NAME)
+            .then((cache) => {
+                console.log('Service Worker: Caching files');
+                return cache.addAll(urlsToCache);
+            })
+            .catch((error) => console.error('Service Worker: Install failed', error))
     );
+    self.skipWaiting();
 });
 
-// Обновление кеша
+
 self.addEventListener('activate', (event) => {
-    const cacheWhitelist = [CACHE_NAME]; // Массив с текущими кешами
     event.waitUntil(
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames.map((cacheName) => {
-                    if (!cacheWhitelist.includes(cacheName)) {
+                    if (cacheName !== CACHE_NAME) {
                         console.log('Service Worker: Deleting old cache', cacheName);
                         return caches.delete(cacheName);
                     }
                 })
             );
+        }).then(() => {
+            return self.clients.claim();
         })
     );
 });
 
-// Слушаем запросы и обрабатываем их с кешированием
+
+const fetchWithTimeout = (request, timeout = 5000) => {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Timeout')), timeout);
+        fetch(request).then(response => {
+            clearTimeout(timer);
+            resolve(response);
+        }).catch(err => {
+            clearTimeout(timer);
+            reject(err);
+        });
+    });
+};
+
+
 self.addEventListener('fetch', (event) => {
+    const url = new URL(event.request.url);
+
+    if (url.protocol === 'chrome-extension:' || event.request.url.includes('hot-update')) {
+        return;
+    }
+
+    if (event.request.url.startsWith('http://localhost:3000')) {
+        event.respondWith(fetchWithTimeout(event.request));
+        return;
+    }
+
     event.respondWith(
         caches.match(event.request).then((cachedResponse) => {
-            // Если файл уже в кеше, отдаем его
             if (cachedResponse) {
                 console.log('Service Worker: Returning cached response');
                 return cachedResponse;
             }
 
-            // Если файл не в кеше, отправляем запрос на сервер
-            return fetch(event.request).then((response) => {
-                // Добавляем новый файл в кеш
-                return caches.open(CACHE_NAME).then((cache) => {
-                    console.log('Service Worker: Caching new resource');
-                    cache.put(event.request, response.clone()); // Кешируем новый файл
-                    return response; // Возвращаем ответ
+            return fetchWithTimeout(event.request)
+                .then((response) => {
+                    if (!response || !response.ok) {
+                        return response;
+                    }
+
+                    return caches.open(CACHE_NAME).then((cache) => {
+                        console.log('Service Worker: Caching new resource', event.request.url);
+                        cache.put(event.request, response.clone());
+                        return response;
+                    });
+                })
+                .catch(() => {
+                    console.warn('Service Worker: Network request failed, returning fallback');
+                    return caches.match('/index.html');
                 });
-            });
         })
     );
 });
